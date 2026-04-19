@@ -18,7 +18,7 @@ Thanks for your interest in contributing. SolTinel is an open-source project and
 ## Development setup
 
 ```bash
-git clone https://github.com/your-username/soltinel
+git clone https://github.com/saadzimat430/soltinel
 cd soltinel
 cp .env.example .env   # fill in at least one LLM API key
 npm install

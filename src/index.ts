@@ -1,8 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { buildGraph } from "./graph/build.js";
-import { log } from "./config/logger.js";
-import { env } from "./config/env.js";
 import { closeReadline } from "./config/prompt.js";
+import { runStartupSetup } from "./config/setup.js";
+import { c, log } from "./config/logger.js";
 
 process.on("SIGINT", () => {
   console.log("");
@@ -12,13 +11,6 @@ process.on("SIGINT", () => {
 });
 
 function printBanner() {
-  const c = {
-    cyan:   "\x1b[36m",
-    yellow: "\x1b[33m",
-    dim:    "\x1b[2m",
-    bold:   "\x1b[1m",
-    reset:  "\x1b[0m",
-  };
   if (process.env.NO_COLOR === "1") {
     console.log(`
   ███████╗ ██████╗ ██╗  ████████╗██╗███╗   ██╗███████╗██╗
@@ -44,12 +36,25 @@ ${c.yellow}                        Think before you trade.${c.reset}
 }
 
 async function main() {
+  printBanner();
+
+  // Interactive .env validation + swap-token selection. Must run BEFORE any
+  // module that statically imports env.ts (which Zod-parses on import).
+  await runStartupSetup();
+
+  // Now safe to load env-dependent modules — all independent, load in parallel.
+  const [{ env }, { buildGraph }, { printWalletDashboard }] = await Promise.all([
+    import("./config/env.js"),
+    import("./graph/build.js"),
+    import("./tools/walletDashboard.js"),
+  ]);
+
+  await printWalletDashboard();
+
   const tokenAddress =
     process.argv[2] ?? "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263"; // BONK
-
   const threadId = randomUUID();
 
-  printBanner();
   log.divider("SOLANA TRADING BOT");
   log.graph(`Token:    ${tokenAddress}`);
   log.graph(`Thread:   ${threadId}`);
@@ -66,7 +71,6 @@ async function main() {
     { configurable: { thread_id: threadId } },
   );
 
-  // ---- Final summary -------------------------------------------------------
   log.divider("RUN SUMMARY");
   log.graph(`All agents completed. Final state:`);
 
@@ -86,11 +90,11 @@ async function main() {
   log.graph(`\n  Decision`);
   const d = result.riskDecision;
   if (d?.decision === "approve") {
-    log.approve(`    APPROVE (${(d.confidence * 100).toFixed(0)}% confidence)`);
+    log.approve(`    APPROVE  (reject_conf=${(d.rejectConfidence * 100).toFixed(0)}%)`);
     log.approve(`    ${d.reason}`);
   } else if (d?.decision === "reject") {
-    log.reject(`    REJECT (${(d?.confidence * 100).toFixed(0)}% confidence)`);
-    log.reject(`    ${d?.reason}`);
+    log.reject(`    REJECT  (reject_conf=${(d.rejectConfidence * 100).toFixed(0)}%)`);
+    log.reject(`    ${d.reason}`);
   }
 
   log.graph(`\n  Action`);
@@ -109,12 +113,5 @@ async function main() {
 }
 
 main()
-  .then(() => {
-    closeReadline();
-    process.exit(0);
-  })
-  .catch((e) => {
-    console.error(e);
-    closeReadline();
-    process.exit(1);
-  });
+  .then(() => { closeReadline(); process.exit(0); })
+  .catch((e) => { console.error(e); closeReadline(); process.exit(1); });

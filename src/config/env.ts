@@ -18,6 +18,13 @@ const schema = z.object({
   JUPITER_API_KEY: z.string().optional(),
 
   X_BEARER_TOKEN: z.string().optional(),
+  // Set to false to skip X entirely and always use neutral sentiment (saves all credits)
+  X_ENABLED: z.string().default("true").transform((v) => v.toLowerCase() === "true"),
+  // How many tweets to fetch per search call (min 10 per X API, each counts as 1 read credit)
+  X_MAX_RESULTS: z.coerce.number().min(10).max(100).default(10),
+  // Cache search results for this many minutes — repeat runs on the same token within
+  // the window reuse the cached posts and burn zero additional credits
+  X_CACHE_TTL_MINUTES: z.coerce.number().min(0).default(15),
 
   // Input token for swaps. Amount unit matches the token:
   //   USDC / USDT → MAX_TRADE_AMOUNT is in USD (e.g. 25 = $25)
@@ -29,7 +36,7 @@ const schema = z.object({
 
   // --- Risk thresholds (hard rules, fail-closed) ---
   RUG_SCORE_MAX: z.coerce.number().default(40),        // 0-100, lower = stricter
-  SENTIMENT_MIN: z.coerce.number().default(0.45),      // 0-1,   higher = stricter
+  SENTIMENT_MIN: z.coerce.number().default(0.35),      // 0-1,   higher = stricter
   MIN_LIQUIDITY_USD: z.coerce.number().default(5_000), // absolute pool liquidity floor
   MIN_VOLUME_24H_USD: z.coerce.number().default(1_000),// minimum 24h trading volume
   MIN_VOL_LIQ_RATIO: z.coerce.number().default(0.01),  // volume/liquidity turnover (1% = low activity)
@@ -53,9 +60,7 @@ const schema = z.object({
 });
 
 export const env = schema.parse(process.env);
+export { schema as envSchema };
 
-if (!env.ANTHROPIC_API_KEY && !env.OPENAI_API_KEY && !env.OPENROUTER_API_KEY) {
-  throw new Error(
-    "Set ANTHROPIC_API_KEY, OPENAI_API_KEY, or OPENROUTER_API_KEY in .env",
-  );
-}
+// LLM key presence is enforced earlier by runStartupSetup() (src/config/setup.ts).
+// We avoid throwing here so this module stays safe to import in any order.

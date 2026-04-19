@@ -72,7 +72,7 @@ export class ClassifiedSwapError extends Error {
   }
 }
 
-function classifySwapError(e: unknown): SwapErrorInfo {
+export function classifySwapError(e: unknown): SwapErrorInfo {
   const msg = e instanceof Error ? e.message : String(e);
   const txLogs: string[] = e instanceof SendTransactionError ? (e.logs ?? []) : [];
   const combined = [msg, ...txLogs].join("\n");
@@ -225,7 +225,7 @@ export const USDC_MINT = INPUT_TOKENS.USDC.mint;
 let _keypair: Keypair | null = null;
 let _connection: Connection | null = null;
 
-function getKeypair(): Keypair {
+export function getKeypair(): Keypair {
   if (_keypair) return _keypair;
   if (!env.SOLANA_PRIVATE_KEY) {
     throw new Error("SOLANA_PRIVATE_KEY not set — cannot execute trades");
@@ -238,7 +238,7 @@ function getKeypair(): Keypair {
   return _keypair;
 }
 
-function getConnection(): Connection {
+export function getConnection(): Connection {
   if (!_connection) _connection = new Connection(env.SOLANA_RPC_URL, "confirmed");
   return _connection;
 }

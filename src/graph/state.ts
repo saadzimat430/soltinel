@@ -12,7 +12,7 @@ export interface SentimentResult {
 export interface RiskDecision {
   decision: "approve" | "reject";
   reason: string;
-  confidence: number; // 0-1
+  rejectConfidence: number; // 0-1 — probability this trade should be rejected
 }
 
 export interface FinalAction {

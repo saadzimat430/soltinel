@@ -1,8 +1,8 @@
 import { env } from "../config/env.js";
 import { jupiterSwap, ClassifiedSwapError, PriceImpactError, getInputToken } from "../tools/solanaKit.js";
-import { log, fmtUsd } from "../config/logger.js";
+import { log, fmtUsd, printSwapSuccess } from "../config/logger.js";
 import { ask } from "../config/prompt.js";
-import type { TradingStateType, FinalAction } from "../graph/state.js";
+import type { TradingStateType } from "../graph/state.js";
 
 export async function executorNode(
   state: TradingStateType,
@@ -80,11 +80,15 @@ export async function executorNode(
         outputMint, finalAmount, env.MAX_SLIPPAGE_BPS, bypassImpactCheck,
       );
 
-      log.approve(`Swap executed successfully`);
-      log.approve(`Price impact:  ${priceImpactPct.toFixed(2)}%`);
-      log.approve(`Slippage used: ${slippageBpsUsed} bps${slippageBpsUsed > env.MAX_SLIPPAGE_BPS ? " (auto-widened from retry)" : ""}`);
-      log.approve(`Signature: ${signature}`);
-      log.approve(`Explorer:  https://solscan.io/tx/${signature}`);
+      printSwapSuccess({
+        symbol,
+        outputMint,
+        spent: fmtInput(finalAmount),
+        priceImpactPct,
+        slippageBpsUsed,
+        slippageBpsConfig: env.MAX_SLIPPAGE_BPS,
+        signature,
+      });
 
       return {
         finalAction: {
@@ -178,8 +182,8 @@ async function promptConfirmation(
     }
 
     if (raw.startsWith("a ")) {
-      const parsed = parseFloat(raw.slice(2));
-      if (!isFinite(parsed) || parsed <= 0) {
+      const parsed = Number.parseFloat(raw.slice(2));
+      if (!Number.isFinite(parsed) || parsed <= 0) {
         log.warn(`  Invalid amount — enter a positive number (e.g. "a 10")`);
         continue;
       }

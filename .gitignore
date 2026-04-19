@@ -41,3 +41,5 @@ coverage/
 .cache/
 tmp/
 temp/
+/docs/marketing/
+/docs/marketing/*

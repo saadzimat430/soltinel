@@ -45,13 +45,13 @@ That's the minimum. Everything else is optional and explained below.
 
 **macOS / Linux:**
 ```bash
-git clone https://github.com/your-username/soltinel
+git clone https://github.com/saadzimat430/soltinel
 cd soltinel
 ```
 
 **Windows (Command Prompt or PowerShell):**
 ```cmd
-git clone https://github.com/your-username/soltinel
+git clone https://github.com/saadzimat430/soltinel
 cd soltinel
 ```
 
@@ -196,12 +196,24 @@ SolTinel works out of the box with no extra keys. But these unlock more:
 Without this, the Sentiment Agent defaults to neutral (0.5). With it, it reads real posts about the token.  
 Get a free bearer token at [developer.twitter.com](https://developer.twitter.com).
 
+> **X API costs money.** The API is pay-per-use: every tweet fetched counts as one read credit. Three settings let you control your bill:
+>
+> | Setting | Default | What it does |
+> |---|---|---|
+> | `X_ENABLED` | `true` | Set to `false` to skip X entirely and always use neutral sentiment — zero credits used. |
+> | `X_MAX_RESULTS` | `10` | Tweets fetched per search call (min 10, max 100). Each tweet = 1 read credit. Lower = cheaper. |
+> | `X_CACHE_TTL_MINUTES` | `15` | Re-runs within this window reuse the cached posts — **0 credits used**. The biggest cost saver if you run the bot frequently. Set to `0` to disable caching. |
+>
+> With defaults, each unique token costs 10 credits the first run, then **nothing** for the next 15 minutes.
+
 **Holder count** (`BIRDEYE_API_KEY`)  
 Adds the number of wallet holders to the analysis. Get a free key at [birdeye.so](https://birdeye.so).
 
 Add them to your `.env`:
 ```
 X_BEARER_TOKEN=your-token-here
+X_MAX_RESULTS=10
+X_CACHE_TTL_MINUTES=15
 BIRDEYE_API_KEY=your-key-here
 ```
 

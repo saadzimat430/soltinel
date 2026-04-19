@@ -10,7 +10,7 @@ import type { TradingStateType, RiskDecision } from "../graph/state.js";
 const DecisionSchema = z.object({
   decision: z.enum(["approve", "reject"]),
   reason: z.string(),
-  confidence: z.number().min(0).max(1),
+  rejectConfidence: z.number().min(0).max(1),
 });
 
 export async function riskGuardNode(
@@ -100,7 +100,7 @@ export async function riskGuardNode(
       const decision: RiskDecision = {
         decision: "approve",
         reason: `[USER OVERRIDE] Original rejection: ${rejectionReason}`,
-        confidence: 0,
+        rejectConfidence: 0,
       };
       log.warn(`User overrode hard-rule rejection — proceeding to executor`);
       return {
@@ -113,7 +113,7 @@ export async function riskGuardNode(
     log.reject(`→ Routing to END — executor will not run`);
     return {
       rugRisk: rug,
-      riskDecision: { decision: "reject", reason: rejectionReason, confidence: 0.95 },
+      riskDecision: { decision: "reject", reason: rejectionReason, rejectConfidence: 0.95 },
       logs: [`[risk] REJECT (hard rules) — ${rejectionReason}`],
     };
   }
@@ -154,18 +154,28 @@ export async function riskGuardNode(
   const llm = getLLM().withStructuredOutput(DecisionSchema);
   const res = await llm.invoke([
     new SystemMessage(
-      "You are a conservative crypto Risk Guard. The inputs already passed all " +
-        "hard rule checks. Decide approve/reject for a small speculative swap. " +
-        "The thresholds object shows the user's configured risk tolerance — respect it. " +
-        "Pay attention to volLiqRatio (turnover), buy/sell pressure, and price momentum. " +
-        "Reject if signals are borderline even when sentiment is bullish. Reason in one sentence.",
+      "You are a conservative crypto Risk Guard for small speculative swaps. " +
+      "Your role is to protect capital, but do not be overly strict. " +
+      "The token already passed all hard rule checks; evaluate only the remaining soft-risk signals. " +
+      "Respect the thresholds object exactly as the user's configured risk tolerance. " +
+      "Give highest weight to: volLiqRatio (turnover quality), buy/sell pressure balance, " +
+      "price momentum direction and stability, and cross-signal consistency. " +
+      "Treat these as negative signals: abnormal turnover vs liquidity, one-sided or unstable " +
+      "buy/sell pressure, overextended or reversal-prone momentum, and setups that are thin " +
+      "or easily manipulated. " +
+      "Do not infer safety from missing evidence, but do not reject on uncertainty alone — " +
+      "only reject if the risk evidence is clearly strong. " +
+      "Set rejectConfidence to the probability (0–1) that this trade should be rejected " +
+      "under the user's configured thresholds. " +
+      "Set decision to 'reject' only if rejectConfidence >= 0.80. Otherwise set 'approve'. " +
+      'Return JSON with exact keys: {"decision":"approve|reject","reason":"<one short sentence>","rejectConfidence":<0-1>}',
     ),
     new HumanMessage(JSON.stringify(payload, null, 2)),
   ]);
 
-  log.risk(`LLM decision:   ${res.decision.toUpperCase()}`);
-  log.risk(`LLM confidence: ${(res.confidence * 100).toFixed(0)}%`);
-  log.risk(`LLM reason:     ${res.reason}`);
+  log.risk(`LLM decision:          ${res.decision.toUpperCase()}`);
+  log.risk(`LLM reject confidence: ${(res.rejectConfidence * 100).toFixed(0)}%  (threshold: ≥80% to reject)`);
+  log.risk(`LLM reason:            ${res.reason}`);
 
   if (res.decision === "approve") {
     log.approve(`Decision: APPROVE`);
@@ -173,7 +183,7 @@ export async function riskGuardNode(
     return {
       rugRisk: rug,
       riskDecision: res as RiskDecision,
-      logs: [`[risk] APPROVE (LLM ${(res.confidence * 100).toFixed(0)}% conf) — ${res.reason}`],
+      logs: [`[risk] APPROVE (LLM reject_conf=${(res.rejectConfidence * 100).toFixed(0)}%) — ${res.reason}`],
     };
   }
 
@@ -185,7 +195,7 @@ export async function riskGuardNode(
     const decision: RiskDecision = {
       decision: "approve",
       reason: `[USER OVERRIDE] LLM rejected: ${res.reason}`,
-      confidence: 0,
+      rejectConfidence: 0,
     };
     log.warn(`User overrode LLM rejection — proceeding to executor`);
     return {
@@ -199,7 +209,7 @@ export async function riskGuardNode(
   return {
     rugRisk: rug,
     riskDecision: res as RiskDecision,
-    logs: [`[risk] REJECT (LLM ${(res.confidence * 100).toFixed(0)}% conf) — ${res.reason}`],
+    logs: [`[risk] REJECT (LLM reject_conf=${(res.rejectConfidence * 100).toFixed(0)}%) — ${res.reason}`],
   };
 }
 

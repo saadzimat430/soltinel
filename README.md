@@ -43,7 +43,7 @@ If any check fails, the trade is rejected with a plain-English reason. No black 
 ## Quickstart
 
 ```bash
-git clone https://github.com/your-username/soltinel
+git clone https://github.com/saadzimat430/soltinel
 cd soltinel
 cp .env.example .env   # fill in your API keys (see GUIDE.md for help)
 npm install

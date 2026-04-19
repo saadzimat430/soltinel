@@ -4,12 +4,19 @@
   "description": "Multi-agent Solana trading bot built with LangGraph + solana-agent-kit",
   "type": "module",
   "main": "dist/index.js",
+  "bin": {
+    "soltinel": "bin/soltinel.mjs"
+  },
   "scripts": {
     "build": "tsc",
     "start": "node --loader ts-node/esm src/index.ts",
     "dev": "tsx src/index.ts",
     "dev:watch": "tsx watch src/index.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:unit": "vitest run tests/unit",
+    "test:integration": "vitest run tests/integration",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@langchain/anthropic": "^0.3.11",
@@ -23,8 +30,10 @@
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
+    "@vitest/coverage-v8": "^1.6.0",
     "ts-node": "^10.9.2",
     "tsx": "^4.19.2",
-    "typescript": "^5.7.2"
+    "typescript": "^5.7.2",
+    "vitest": "^1.6.0"
   }
 }
