@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 import path from "node:path";
@@ -85,9 +86,20 @@ if (flag === "--version" || flag === "-v") {
 
 const entry = path.resolve(root, "dist", "cli.js");
 
+// Resolve .env: cwd first, then ~/soltinel/.env as global config home
+const cwdEnv = path.resolve(process.cwd(), ".env");
+const homeEnv = path.resolve(
+  process.env.HOME || process.env.USERPROFILE || "~",
+  "soltinel",
+  ".env"
+);
+const envFile = existsSync(cwdEnv) ? cwdEnv : existsSync(homeEnv) ? homeEnv : null;
+const extraEnv = envFile ? { DOTENV_CONFIG_PATH: envFile } : {};
+
 const child = spawn(process.execPath, [entry, ...args], {
   stdio: "inherit",
   cwd: process.cwd(),
+  env: { ...process.env, ...extraEnv },
 });
 
 child.on("exit", (code, signal) => {

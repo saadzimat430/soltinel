@@ -53,18 +53,37 @@ The embeddable API exposes `analyzeToken()`, `runSoltinelSession()`, and `execut
 
 ## Quickstart
 
+### One-line install (recommended)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/saadzimat430/soltinel/main/install.sh | sh
+```
+
+This installs the `soltinel` CLI globally, creates `~/soltinel/.env` with all options pre-filled, and prints exactly what to edit. Requires Node.js 18+.
+
+Then:
+
+```bash
+nano ~/soltinel/.env   # add SOLANA_PRIVATE_KEY + OPENROUTER_API_KEY
+soltinel               # analyze BONK in dry-run mode
+soltinel <TOKEN_MINT>  # analyze any token
+```
+
+### npx (no install)
+
+```bash
+npx soltinel
+npx soltinel <TOKEN_MINT>
+```
+
+### From source
+
 ```bash
 git clone https://github.com/saadzimat430/soltinel
 cd soltinel
 cp .env.example .env   # fill in your API keys (see GUIDE.md for help)
 npm install
 npm run dev            # runs in dry-run mode on BONK by default
-```
-
-To analyse a specific token:
-
-```bash
-npm run dev -- <SOLANA_TOKEN_MINT_ADDRESS>
 ```
 
 No wallet needed to start — `DRY_RUN=true` by default. You'll see the full agent pipeline run and a detailed rejection or approval reason without any funds at risk.
