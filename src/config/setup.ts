@@ -1,7 +1,8 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import { ask } from "./prompt.js";
+import { ask, askPassword } from "./prompt.js";
 import { c } from "./logger.js";
+import { keystoreExists, encryptKey, decryptKey, KEYSTORE_PATH } from "./keystore.js";
 
 const ENV_PATH = path.resolve(process.cwd(), ".env");
 
@@ -13,8 +14,8 @@ interface FieldSpec {
 }
 
 const REQUIRED_CORE: FieldSpec[] = [
-  { key: "SOLANA_RPC_URL",     label: "Solana RPC endpoint URL", required: true,  default: "https://api.mainnet-beta.solana.com" },
-  { key: "SOLANA_PRIVATE_KEY", label: "Wallet private key (base58)",  required: true  },
+  { key: "SOLANA_RPC_URL", label: "Solana RPC endpoint URL", required: true, default: "https://api.mainnet-beta.solana.com" },
+  // SOLANA_PRIVATE_KEY is handled exclusively by the keystore section below.
 ];
 
 const LLM_KEYS: FieldSpec[] = [
@@ -24,9 +25,9 @@ const LLM_KEYS: FieldSpec[] = [
 ];
 
 const OPTIONAL: FieldSpec[] = [
-  { key: "BIRDEYE_API_KEY", label: "Birdeye API key (recommended for market data)",          required: false },
-  { key: "X_BEARER_TOKEN",  label: "X (Twitter) bearer token (recommended for sentiment)",   required: false },
-  { key: "JUPITER_API_KEY", label: "Jupiter API key (higher rate limits)",                   required: false },
+  { key: "BIRDEYE_API_KEY", label: "Birdeye API key (recommended for market data)",        required: false },
+  { key: "X_BEARER_TOKEN",  label: "X (Twitter) bearer token (recommended for sentiment)", required: false },
+  { key: "JUPITER_API_KEY", label: "Jupiter API key (higher rate limits)",                 required: false },
 ];
 
 const VALID_TOKENS = ["USDC", "USDT", "SOL"] as const;
@@ -34,11 +35,7 @@ const TOKEN_NUM_ALIAS: Record<string, string> = { "1": "USDC", "2": "USDT", "3":
 
 async function readEnvFile(): Promise<{ values: Record<string, string>; raw: string }> {
   let raw = "";
-  try {
-    raw = await fs.readFile(ENV_PATH, "utf8");
-  } catch {
-    return { values: {}, raw: "" };
-  }
+  try { raw = await fs.readFile(ENV_PATH, "utf8"); } catch { /* no .env yet */ }
   const values: Record<string, string> = {};
   for (const line of raw.split(/\r?\n/)) {
     const trimmed = line.trim();
@@ -47,10 +44,7 @@ async function readEnvFile(): Promise<{ values: Record<string, string>; raw: str
     if (eq < 1) continue;
     const k = trimmed.slice(0, eq).trim();
     let v = trimmed.slice(eq + 1).trim();
-    if (
-      (v.startsWith('"') && v.endsWith('"')) ||
-      (v.startsWith("'") && v.endsWith("'"))
-    ) {
+    if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) {
       v = v.slice(1, -1);
     }
     values[k] = v;
@@ -58,7 +52,11 @@ async function readEnvFile(): Promise<{ values: Record<string, string>; raw: str
   return { values, raw };
 }
 
-async function writeEnvFile(updates: Record<string, string>, originalRaw: string): Promise<void> {
+async function writeEnvFile(
+  updates: Record<string, string>,
+  originalRaw: string,
+  remove: Set<string> = new Set(),
+): Promise<void> {
   const seen = new Set<string>();
   const out: string[] = [];
   for (const line of originalRaw.split(/\r?\n/)) {
@@ -67,6 +65,7 @@ async function writeEnvFile(updates: Record<string, string>, originalRaw: string
     const eq = trimmed.indexOf("=");
     if (eq < 1) { out.push(line); continue; }
     const k = trimmed.slice(0, eq).trim();
+    if (remove.has(k)) continue; // strip this key from the file
     if (Object.prototype.hasOwnProperty.call(updates, k)) {
       out.push(`${k}=${updates[k]}`);
       seen.add(k);
@@ -96,10 +95,10 @@ async function promptField(
   updates: Record<string, string>,
 ): Promise<void> {
   const optional = !field.required;
-  const def = field.default ? ` ${c.dim}[${field.default}]${c.reset}` : "";
+  const def  = field.default ? ` ${c.dim}[${field.default}]${c.reset}` : "";
   const tail = optional ? ` ${c.dim}(press Enter to skip)${c.reset}` : "";
-  const ans = (await ask(`${c.yellow}? ${field.label}${def}${tail}: ${c.reset}`)).trim();
-  const val = ans || field.default || "";
+  const ans  = (await ask(`${c.yellow}? ${field.label}${def}${tail}: ${c.reset}`)).trim();
+  const val  = ans || field.default || "";
   if (!val) {
     if (optional) return;
     throw new Error(`${field.key} is required to continue`);
@@ -107,10 +106,93 @@ async function promptField(
   setField(field.key, val, merged, updates);
 }
 
+// ── Keystore unlock / first-time setup ──────────────────────────────────────
+
+async function unlockWallet(
+  fileEnv: Record<string, string>,
+  removes: Set<string>,
+): Promise<void> {
+  console.log(`\n${c.cyan}${c.bold}── Wallet unlock ──${c.reset}`);
+
+  // CI / automation: key injected via environment — skip all prompts.
+  if (process.env.SOLANA_PRIVATE_KEY) {
+    console.log(`${c.dim}  Using SOLANA_PRIVATE_KEY from environment (CI mode)${c.reset}`);
+    return;
+  }
+
+  // ── Existing keystore: prompt for master password ────────────────────────
+  if (keystoreExists()) {
+    const MAX_ATTEMPTS = 3;
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      const password = await askPassword(`${c.yellow}🔐 Master password: ${c.reset}`);
+      try {
+        const key = decryptKey(password);
+        process.env.SOLANA_PRIVATE_KEY = key;
+        console.log(`${c.brightGreen}  ✓ Wallet unlocked${c.reset}`);
+        return;
+      } catch {
+        if (attempt < MAX_ATTEMPTS) {
+          console.log(`${c.red}  ✗ Wrong password — ${MAX_ATTEMPTS - attempt} attempt(s) left${c.reset}`);
+        } else {
+          throw new Error("Too many failed attempts — aborting.");
+        }
+      }
+    }
+    return;
+  }
+
+  // ── No keystore yet: import key and create one ───────────────────────────
+  let privateKey: string;
+
+  if (fileEnv.SOLANA_PRIVATE_KEY) {
+    // Key found in plain .env — offer to migrate to encrypted keystore.
+    console.log(`${c.yellow}  ⚠  SOLANA_PRIVATE_KEY found in plain .env — this is insecure.${c.reset}`);
+    const ans = (await ask(`${c.yellow}  Encrypt it in a keystore and remove from .env? ${c.dim}[Y/n]${c.reset}: `)).trim();
+    if (ans.toLowerCase() === "n") {
+      // User declined — use as-is (backward compatible).
+      process.env.SOLANA_PRIVATE_KEY = fileEnv.SOLANA_PRIVATE_KEY;
+      console.log(`${c.dim}  Using plain key. Re-run without declining to encrypt later.${c.reset}`);
+      return;
+    }
+    privateKey = fileEnv.SOLANA_PRIVATE_KEY;
+    removes.add("SOLANA_PRIVATE_KEY"); // strip from .env after encrypting
+  } else {
+    // Fresh install — ask for the key.
+    privateKey = (await ask(`${c.yellow}? Wallet private key (base58): ${c.reset}`)).trim();
+    if (!privateKey) throw new Error("SOLANA_PRIVATE_KEY is required to continue.");
+  }
+
+  // Choose and confirm master password.
+  let password = "";
+  while (true) {
+    password = await askPassword(`${c.yellow}🔐 Set master password: ${c.reset}`);
+    if (!password) {
+      console.log(`${c.red}  Password cannot be empty.${c.reset}`);
+      continue;
+    }
+    const confirm = await askPassword(`${c.yellow}🔐 Confirm master password: ${c.reset}`);
+    if (password === confirm) break;
+    console.log(`${c.red}  ✗ Passwords don't match — try again.${c.reset}`);
+  }
+
+  console.log(`${c.dim}  Encrypting… (this takes ~1 s)${c.reset}`);
+  encryptKey(privateKey, password);
+  process.env.SOLANA_PRIVATE_KEY = privateKey;
+
+  console.log(`${c.brightGreen}  ✓ Key encrypted → ${KEYSTORE_PATH}${c.reset}`);
+  console.log(`${c.dim}  Back up that file. Never share it or commit it to git.${c.reset}`);
+}
+
+// ── Main export ──────────────────────────────────────────────────────────────
+
 export async function runStartupSetup(): Promise<void> {
   const { values: fileEnv, raw: originalRaw } = await readEnvFile();
   const merged: Record<string, string> = { ...fileEnv };
   const updates: Record<string, string> = {};
+  const removes = new Set<string>();
+
+  // Wallet key first — must be in process.env before env.ts is imported.
+  await unlockWallet(fileEnv, removes);
 
   console.log(`\n${c.cyan}${c.bold}── Configuration check ──${c.reset}`);
 
@@ -139,8 +221,8 @@ export async function runStartupSetup(): Promise<void> {
   console.log(`\n${c.cyan}${c.bold}── Swap-from token ──${c.reset}`);
   const current = existing(merged, "SWAP_INPUT_TOKEN") ?? "USDC";
   console.log(`  ${c.bold}1)${c.reset} USDC    ${c.bold}2)${c.reset} USDT    ${c.bold}3)${c.reset} SOL`);
-  const sel = (await ask(`${c.yellow}? Select swap-from token ${c.dim}[current: ${current}]${c.reset}: `)).trim();
-  const upper = sel.toUpperCase();
+  const sel    = (await ask(`${c.yellow}? Select swap-from token ${c.dim}[current: ${current}]${c.reset}: `)).trim();
+  const upper  = sel.toUpperCase();
   const chosen = !sel
     ? current
     : TOKEN_NUM_ALIAS[sel] ?? (VALID_TOKENS.includes(upper as typeof VALID_TOKENS[number]) ? upper : null);
@@ -153,8 +235,14 @@ export async function runStartupSetup(): Promise<void> {
   }
   console.log(`${c.brightGreen}  ✓ Selected: ${chosen}${c.reset}`);
 
-  if (Object.keys(updates).length > 0) {
-    await writeEnvFile(updates, originalRaw);
-    console.log(`${c.dim}  Saved ${Object.keys(updates).length} value(s) to .env${c.reset}`);
+  if (Object.keys(updates).length > 0 || removes.size > 0) {
+    await writeEnvFile(updates, originalRaw, removes);
+    const saved = Object.keys(updates).length;
+    const removed = removes.size;
+    const parts = [
+      saved   > 0 ? `saved ${saved} value(s)` : "",
+      removed > 0 ? `removed ${removed} plaintext key(s)` : "",
+    ].filter(Boolean).join(", ");
+    console.log(`${c.dim}  .env updated: ${parts}${c.reset}`);
   }
 }

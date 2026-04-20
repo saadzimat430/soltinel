@@ -29,3 +29,47 @@ export function closeReadline(): void {
 export async function ask(question: string): Promise<string> {
   return getReadline().question(question);
 }
+
+export async function askPassword(prompt: string): Promise<string> {
+  // readline and raw mode cannot share stdin simultaneously — close the singleton first.
+  closeReadline();
+
+  // Non-interactive (pipe / CI): fall back to visible input via a fresh readline.
+  if (!process.stdin.isTTY) {
+    return ask(prompt);
+  }
+
+  return new Promise<string>((resolve) => {
+    const chars: string[] = [];
+    process.stdout.write(prompt);
+    process.stdin.setRawMode(true);
+    process.stdin.resume();
+    process.stdin.setEncoding("utf8");
+
+    const handler = (char: string) => {
+      switch (char) {
+        case "\r":
+        case "\n":
+          process.stdin.setRawMode(false);
+          process.stdin.pause();
+          process.stdin.removeListener("data", handler);
+          process.stdout.write("\n");
+          resolve(chars.join(""));
+          break;
+        case "\u0003": // Ctrl-C
+          process.stdout.write("\n");
+          process.exit(0);
+          break;
+        case "\u007f": // Backspace (DEL)
+        case "\b":
+          if (chars.length) { chars.pop(); process.stdout.write("\b \b"); }
+          break;
+        default:
+          chars.push(char);
+          process.stdout.write("*");
+      }
+    };
+
+    process.stdin.on("data", handler);
+  });
+}
