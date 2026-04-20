@@ -1,6 +1,6 @@
 {
   "name": "soltinel",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Multi-agent Solana trading bot — Analyst → Sentiment → RiskGuard → Executor",
   "keywords": [
     "solana",
