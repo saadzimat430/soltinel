@@ -5,21 +5,19 @@ on:
     tags:
       - "v*.*.*"
 
-permissions:
-  contents: write   # create GitHub release
-  id-token: write   # npm provenance attestation
-
 jobs:
   # ── 1. Quality gate ─────────────────────────────────────────────────────────
   quality:
     name: Typecheck, audit & unit tests
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
-          node-version: 20
+          node-version: 24
           cache: npm
 
       - run: npm ci
@@ -38,12 +36,14 @@ jobs:
     name: Integration tests
     needs: quality
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
-          node-version: 20
+          node-version: 24
           cache: npm
 
       - run: npm ci
@@ -53,15 +53,18 @@ jobs:
 
   # ── 3. Build + publish + GitHub release ─────────────────────────────────────
   publish:
-    name: Publish to npm & create GitHub release
+    name: Publish to npm with trusted publishing & create GitHub release
     needs: integration
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
-          node-version: 20
+          node-version: 24
           cache: npm
           registry-url: https://registry.npmjs.org
 
@@ -82,10 +85,8 @@ jobs:
             exit 1
           fi
 
-      - name: Publish to npm
-        run: npm publish --provenance --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Publish to npm via trusted publishing (OIDC)
+        run: npm publish --access public
 
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2
