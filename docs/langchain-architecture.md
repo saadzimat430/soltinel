@@ -23,10 +23,10 @@ This document explains exactly how `@langchain/core`, `@langchain/langgraph`, an
 
 ```
 StateGraph(TradingState)
-  .addNode("analystAgent",   analystNode)
-  .addNode("sentimentAgent", sentimentNode)
-  .addNode("riskGuardAgent", riskGuardNode)
-  .addNode("executorAgent",  executorNode)
+  .addNode("analystAgent",   instrumentNode("analyst", analystNode))
+  .addNode("sentimentAgent", instrumentNode("sentiment", sentimentNode))
+  .addNode("riskGuardAgent", instrumentNode("risk_guard", riskGuardNode))
+  .addNode("executorAgent",  instrumentNode("executor", executorNode))
 ```
 
 Execution flows sequentially:
@@ -80,7 +80,7 @@ return graph.compile({ checkpointer });
 
 After every node completes, LangGraph serialises the full state snapshot and hands it to the checkpointer. `MemorySaver` stores snapshots in a plain in-memory `Map` keyed by `thread_id`.
 
-Each run gets a unique `thread_id` (generated in `src/index.ts`). This enables:
+Each run gets a unique `thread_id` (generated in `src/api.ts` for library calls or `src/cli.ts` for terminal runs). This enables:
 
 - **Replay**: call `graph.invoke(null, { configurable: { thread_id } })` with the same thread to resume from the last checkpoint.
 - **Human-in-the-loop**: add `interruptBefore: ["executorAgent"]` to `graph.compile({...})` to pause execution before the trade and await external approval before resuming.
@@ -201,7 +201,21 @@ END → graph.invoke returns final TradingStateType snapshot
 
 ---
 
-## 5. Extending the LangChain layer
+## 5. Integration layer
+
+`src/api.ts` is the embeddable boundary around the graph:
+
+- `analyzeToken()` runs the graph in `analysis` mode, so the executor returns a typed skip instead of touching Jupiter.
+- `runSoltinelSession()` runs the full graph in `headless` or `cli` mode and returns machine-readable output.
+- `executeApprovedTrade()` runs the executor directly from a pre-approved state.
+
+`src/runtime/session.ts` uses `AsyncLocalStorage` to inject host runtime hooks into the agent pipeline without threading callback functions through `TradingState`. This is how the same graph supports both terminal prompts and external orchestrators.
+
+The runtime can subscribe to `onEvent(event)` for structured events such as `session_started`, `agent_started`, `decision_made`, `trade_confirmation_requested`, `trade_executed`, and `session_completed`.
+
+---
+
+## 6. Extending the LangChain layer
 
 **Add a new agent** — create an async function `(state: TradingStateType) => Promise<Partial<TradingStateType>>` and register it with `.addNode()`. Name it with a suffix that doesn't match any state key.
 

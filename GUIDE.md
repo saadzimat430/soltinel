@@ -188,6 +188,34 @@ npm run dev -- So11111111111111111111111111111111111111112
 
 ---
 
+## Using SolTinel from another agent
+
+If you want to integrate SolTinel into another runtime instead of launching the CLI, import the package API:
+
+```ts
+import { analyzeToken, runSoltinelSession } from "soltinel";
+
+const result = await analyzeToken({
+  tokenAddress: "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263",
+  interactionMode: "headless",
+  hooks: {
+    onEvent(event) {
+      console.log(event.type, event.agent, event.data);
+    },
+  },
+});
+```
+
+For live orchestration, `runSoltinelSession()` also accepts host approval hooks:
+
+- `confirmTrade(request)` for the executor confirmation gate
+- `confirmOverride(request)` for Risk Guard rejection overrides
+- `confirmHighPriceImpact(request)` for the Jupiter price-impact warning
+
+This keeps the core trading logic reusable without wiring another system through terminal prompts.
+
+---
+
 ## Optional: get better data
 
 SolTinel works out of the box with no extra keys. But these unlock more:

@@ -83,7 +83,7 @@ if (flag === "--version" || flag === "-v") {
   process.exit(0);
 }
 
-const entry = path.resolve(root, "dist", "index.js");
+const entry = path.resolve(root, "dist", "cli.js");
 
 const child = spawn(process.execPath, [entry, ...args], {
   stdio: "inherit",
@@ -98,7 +98,7 @@ child.on("exit", (code, signal) => {
 child.on("error", (err) => {
   if (err.code === "ENOENT") {
     console.error(
-      `dist/index.js not found.\n` +
+      `dist/cli.js not found.\n` +
       `  If you cloned the repo, run: npm run build\n` +
       `  If you installed via npm/npx, please file a bug.`
     );

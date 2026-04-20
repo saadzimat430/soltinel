@@ -8,10 +8,13 @@ Multi-agent Solana trading bot. Four sequential AI agents analyse a token and ex
 
 ```
 src/
+  api.ts        programmatic integration facade for external runtimes
   agents/       analyst, sentiment, riskGuard, executor — one file per agent
+  cli.ts        terminal entry point
   config/       env (Zod schema), logger (ANSI palette), llm (provider resolution),
                 prompt (readline singleton), setup (interactive .env wizard)
   graph/        state.ts (LangGraph Annotation schema), build.ts (topology + routing)
+  runtime/      async session context for host hooks, approvals, and events
   tools/        birdeye, rugcheck, solanaKit, walletDashboard, xSentiment
 bin/
   soltinel.mjs  CLI entry point (tsx spawner for `npm link`)
@@ -121,12 +124,28 @@ LangGraph `Annotation` object. Fields flow read-only through the pipeline — ea
 
 ```
 DRY_RUN=true  ──▶ log only, no signing, returns dryRun:true
+analysis mode ──▶ returns note="analysis-only mode — execution skipped"
 DRY_RUN=false ──▶ confirmation prompt  (y | a <amount> | n)
                 ──▶ Jupiter /quote
                 ──▶ price impact check (warn + optional 2× slippage retry)
                 ──▶ Jupiter /swap
                 ──▶ green success banner with Solscan link
 ```
+
+### Integration surface
+
+`src/api.ts` exposes:
+
+- `analyzeToken(input)` — run Analyst → Sentiment → Risk Guard in analysis-only mode
+- `runSoltinelSession(input)` — run the full graph with host-controlled approvals/events
+- `executeApprovedTrade(input)` — execute only the Executor stage from a pre-approved state
+
+Runtime hosts can inject:
+
+- `onEvent(event)` for structured progress streaming
+- `confirmTrade(request)` instead of readline confirmation
+- `confirmOverride(request)` instead of the Risk Guard override prompt
+- `confirmHighPriceImpact(request)` instead of the price-impact prompt
 
 ---
 
@@ -137,6 +156,7 @@ DRY_RUN=false ──▶ confirmation prompt  (y | a <amount> | n)
 - **ANSI colors:** always import `c` from `src/config/logger.ts`. Never define a local color palette. Respects `NO_COLOR`.
 - **Wallet / RPC:** use `getKeypair()` and `getConnection()` from `src/tools/solanaKit.ts`. Both are singletons — do not instantiate `Keypair` or `Connection` elsewhere.
 - **Readline:** use the singleton from `src/config/prompt.ts`. Never open a second `readline.createInterface`.
+- **Integration hooks:** if work must interact with another runtime, thread it through `src/runtime/session.ts` rather than adding direct prompts/network callbacks to agents.
 - **LLM:** call `resolveLlm()` from `src/config/llm.ts` to get the configured model. Do not construct `ChatAnthropic` / `ChatOpenAI` directly.
 - **Env vars:** access via the Zod-parsed object exported from `src/config/env.ts`, not `process.env` directly.
 

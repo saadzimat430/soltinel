@@ -3,6 +3,13 @@ import { jupiterSwap, ClassifiedSwapError, PriceImpactError, getInputToken } fro
 import { log, fmtUsd, printSwapSuccess } from "../config/logger.js";
 import { ask } from "../config/prompt.js";
 import type { TradingStateType } from "../graph/state.js";
+import {
+  emitEvent,
+  getExecutionMode,
+  getInteractionMode,
+  requestPriceImpactDecision,
+  requestTradeConfirmation,
+} from "../runtime/session.js";
 
 export async function executorNode(
   state: TradingStateType,
@@ -31,6 +38,18 @@ export async function executorNode(
   log.executor(`Route:  Jupiter v6 /quote → /swap`);
   log.executor(`DRY_RUN: ${env.DRY_RUN}`);
 
+  if (getExecutionMode() === "analysis") {
+    log.executor(`Execution mode is analysis-only — swap adapter will not run`);
+    return {
+      finalAction: {
+        type: "none",
+        dryRun: env.DRY_RUN,
+        note: "analysis-only mode — execution skipped",
+      },
+      logs: [`[executor] skipped — analysis-only mode`],
+    };
+  }
+
   if (env.DRY_RUN) {
     log.executor(`DRY_RUN=true — transaction will NOT be signed or submitted`);
     log.executor(`Would swap: ${fmtInput(tradeAmount)} → ${symbol}`);
@@ -52,9 +71,20 @@ export async function executorNode(
   // ---- User confirmation gate (skipped only in headless/autonomous mode) ---
   let finalAmount = tradeAmount;
   if (env.REQUIRE_CONFIRMATION) {
-    const { confirmed, amountUsd: chosenAmount } = await promptConfirmation(state, symbol, tradeAmount, fmtInput);
+    const { confirmed, amountUsd: chosenAmount } = await promptConfirmation(
+      state,
+      symbol,
+      tradeAmount,
+      fmtInput,
+    );
     if (!confirmed) {
       log.warn(`Trade cancelled by user`);
+      await emitEvent({
+        type: "trade_cancelled",
+        agent: "executor",
+        tokenAddress: state.tokenAddress,
+        data: { reason: "cancelled at confirmation gate" },
+      });
       return {
         finalAction: { type: "none", dryRun: false, note: "cancelled by user at confirmation prompt" },
         logs: [`[executor] cancelled by user`],
@@ -90,6 +120,20 @@ export async function executorNode(
         signature,
       });
 
+      await emitEvent({
+        type: "trade_executed",
+        agent: "executor",
+        tokenAddress: state.tokenAddress,
+        data: {
+          amountUsd: finalAmount,
+          outputMint,
+          symbol,
+          signature,
+          priceImpactPct,
+          slippageBpsUsed,
+        },
+      });
+
       return {
         finalAction: {
           type: "swap",
@@ -103,12 +147,28 @@ export async function executorNode(
       };
     } catch (e) {
       if (e instanceof PriceImpactError) {
-        const proceed = await promptPriceImpact(e.impactPct, e.thresholdPct);
+        const proceed = await promptPriceImpact(
+          state.tokenAddress,
+          symbol,
+          finalAmount,
+          e.impactPct,
+          e.thresholdPct,
+        );
         if (proceed) {
           bypassImpactCheck = true;
           continue;
         }
         log.warn(`Trade cancelled — price impact too high`);
+        await emitEvent({
+          type: "trade_cancelled",
+          agent: "executor",
+          tokenAddress: state.tokenAddress,
+          data: {
+            reason: "price impact rejected",
+            impactPct: e.impactPct,
+            thresholdPct: e.thresholdPct,
+          },
+        });
         return {
           finalAction: { type: "none", dryRun: false, note: `cancelled: price impact ${e.impactPct.toFixed(2)}% > ${e.thresholdPct}%` },
           logs: [`[executor] cancelled — price impact ${e.impactPct.toFixed(2)}% exceeded threshold`],
@@ -147,6 +207,39 @@ async function promptConfirmation(
   defaultAmount: number,
   fmtInput: (n: number) => string,
 ): Promise<ConfirmationResult> {
+  const inputToken = getInputToken();
+
+  await emitEvent({
+    type: "trade_confirmation_requested",
+    agent: "executor",
+    tokenAddress: state.tokenAddress,
+    data: {
+      symbol,
+      defaultAmount,
+      inputSymbol: inputToken.symbol,
+    },
+  });
+
+  const hostResponse = await requestTradeConfirmation({
+    tokenAddress: state.tokenAddress,
+    symbol,
+    inputSymbol: inputToken.symbol,
+    inputMint: inputToken.mint,
+    defaultAmount,
+    maxAmount: env.MAX_TRADE_AMOUNT,
+    sentiment: state.sentiment,
+    rugRisk: state.rugRisk,
+    riskDecision: state.riskDecision,
+  });
+  if (hostResponse) {
+    const amountUsd = normalizeConfirmedAmount(hostResponse.amountUsd ?? defaultAmount);
+    return { confirmed: hostResponse.approved, amountUsd };
+  }
+
+  if (getInteractionMode() !== "cli") {
+    return { confirmed: false, amountUsd: defaultAmount };
+  }
+
   const printBox = (amount: number) => {
     console.log("");
     log.warn(`══════════════════════════════════════════════════════`);
@@ -201,7 +294,40 @@ async function promptConfirmation(
   }
 }
 
-async function promptPriceImpact(impactPct: number, thresholdPct: number): Promise<boolean> {
+async function promptPriceImpact(
+  tokenAddress: string,
+  symbol: string,
+  amountUsd: number,
+  impactPct: number,
+  thresholdPct: number,
+): Promise<boolean> {
+  await emitEvent({
+    type: "price_impact_warning",
+    agent: "executor",
+    tokenAddress,
+    data: {
+      symbol,
+      amountUsd,
+      impactPct,
+      thresholdPct,
+    },
+  });
+
+  const hostDecision = await requestPriceImpactDecision({
+    tokenAddress,
+    symbol,
+    amountUsd,
+    impactPct,
+    thresholdPct,
+  });
+  if (hostDecision != null) {
+    return hostDecision;
+  }
+
+  if (getInteractionMode() !== "cli") {
+    return false;
+  }
+
   console.log("");
   log.warn(`══════════════════════════════════════════════════════`);
   log.warn(`  HIGH PRICE IMPACT WARNING`);
@@ -215,4 +341,11 @@ async function promptPriceImpact(impactPct: number, thresholdPct: number): Promi
   console.log("");
   const answer = await ask(`  Proceed anyway? [y/N]: `);
   return answer.trim().toLowerCase() === "y";
+}
+
+function normalizeConfirmedAmount(amountUsd: number): number {
+  if (!Number.isFinite(amountUsd) || amountUsd <= 0) {
+    return env.MAX_TRADE_AMOUNT;
+  }
+  return Math.min(amountUsd, env.MAX_TRADE_AMOUNT);
 }

@@ -40,6 +40,17 @@ If any check fails, the trade is rejected with a plain-English reason. No black 
 
 ---
 
+## CLI And API
+
+SolTinel now supports both:
+
+- `src/cli.ts` / `soltinel` for interactive terminal use
+- `src/api.ts` / package `main` for embedding in host runtimes like `openclaw` or `hermes`
+
+The embeddable API exposes `analyzeToken()`, `runSoltinelSession()`, and `executeApprovedTrade()`, plus host hooks for approval gates and structured progress events.
+
+---
+
 ## Quickstart
 
 ```bash
@@ -73,7 +84,7 @@ No wallet needed to start — `DRY_RUN=true` by default. You'll see the full age
 | `X_BEARER_TOKEN` | No | Enables real X sentiment (falls back to neutral) |
 | `MAX_SLIPPAGE_BPS` | No | Jupiter swap slippage tolerance in basis points (default `100` = 1%) |
 | `RUG_SCORE_MAX` | No | Reject if rug risk score exceeds this (0–100, default `40`) |
-| `SENTIMENT_MIN` | No | Reject if sentiment score is below this (0–1, default `0.45`) |
+| `SENTIMENT_MIN` | No | Reject if sentiment score is below this (0–1, default `0.35`) |
 | `MIN_LIQUIDITY_USD` | No | Reject if pool liquidity is below this in USD (default `5000`) |
 | `MIN_VOLUME_24H_USD` | No | Reject if 24h volume is below this in USD (default `1000`) |
 | `MIN_VOL_LIQ_RATIO` | No | Reject if volume/liquidity turnover ratio is below this (default `0.01` = 1%) |
@@ -81,9 +92,7 @@ No wallet needed to start — `DRY_RUN=true` by default. You'll see the full age
 | `DRY_RUN` | No | `true` by default — set to `false` for live trades |
 | `REQUIRE_CONFIRMATION` | No | `true` by default — prompts "y/n" before every real trade; set to `false` for headless/autonomous mode |
 | `ALLOW_OVERRIDE` | No | `false` by default — when `true`, shows an override prompt after any rejection so you can proceed at your own risk |
-| `MAX_TRADE_USD` | No | Max USDC per trade, defaults to $25 |
-| `RUG_SCORE_MAX` | No | Reject if rug score exceeds this (0–100), defaults to 40 |
-| `SENTIMENT_MIN` | No | Reject if sentiment below this (0–1), defaults to 0.45 |
+| `MAX_TRADE_AMOUNT` | No | Max input-token amount per trade, defaults to `25` |
 
 ---
 
@@ -109,6 +118,46 @@ Borderline cases go to the LLM with full context. Decisions are always typed and
 **Persistent state** — swap `MemorySaver` for `PostgresSaver` from `@langchain/langgraph-checkpoint-postgres` to survive restarts.
 
 **More data sources** — add a node for Pump.fun trending, whale wallet tracking, or on-chain order book depth.
+
+---
+
+## Integration API
+
+For agent runtimes and services, import the package instead of shelling out to the CLI:
+
+```ts
+import { analyzeToken, runSoltinelSession } from "soltinel";
+
+const analysis = await analyzeToken({
+  tokenAddress: "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263",
+  hooks: {
+    onEvent(event) {
+      console.log(event.type, event.agent, event.data);
+    },
+  },
+});
+
+const session = await runSoltinelSession({
+  tokenAddress: "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263",
+  interactionMode: "headless",
+  hooks: {
+    onEvent(event) {
+      console.log(event.type, event.data);
+    },
+    confirmTrade() {
+      return { approved: true, amountUsd: 10 };
+    },
+    confirmOverride() {
+      return false;
+    },
+    confirmHighPriceImpact() {
+      return false;
+    },
+  },
+});
+```
+
+`runSoltinelSession()` returns machine-readable output including `decision`, `confidence`, `blockingReasons`, `recommendedAction`, `executionStatus`, `finalAction`, and the full typed graph `state`.
 
 ---
 

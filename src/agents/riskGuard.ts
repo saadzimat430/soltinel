@@ -6,6 +6,12 @@ import { env } from "../config/env.js";
 import { log, fmtUsd, fmtPct } from "../config/logger.js";
 import { ask } from "../config/prompt.js";
 import type { TradingStateType, RiskDecision } from "../graph/state.js";
+import {
+  emitEvent,
+  getInteractionMode,
+  requestOverrideDecision,
+  type OverrideSource,
+} from "../runtime/session.js";
 
 const DecisionSchema = z.object({
   decision: z.enum(["approve", "reject"]),
@@ -95,7 +101,19 @@ export async function riskGuardNode(
     log.reject(`Decision: REJECT (hard rules)`);
     log.reject(`Reason:   ${rejectionReason}`);
 
-    const override = await promptOverride(rejectionReason, "hard-rule");
+    await emitEvent({
+      type: "decision_made",
+      agent: "risk_guard",
+      tokenAddress: state.tokenAddress,
+      data: {
+        decision: "reject",
+        reason: rejectionReason,
+        rejectConfidence: 0.95,
+        source: "hard-rule",
+      },
+    });
+
+    const override = await promptOverride(state, rug, rejectionReason, "hard-rule");
     if (override) {
       const decision: RiskDecision = {
         decision: "approve",
@@ -177,6 +195,18 @@ export async function riskGuardNode(
   log.risk(`LLM reject confidence: ${(res.rejectConfidence * 100).toFixed(0)}%  (threshold: ≥80% to reject)`);
   log.risk(`LLM reason:            ${res.reason}`);
 
+  await emitEvent({
+    type: "decision_made",
+    agent: "risk_guard",
+    tokenAddress: state.tokenAddress,
+    data: {
+      decision: res.decision,
+      reason: res.reason,
+      rejectConfidence: res.rejectConfidence,
+      source: "llm",
+    },
+  });
+
   if (res.decision === "approve") {
     log.approve(`Decision: APPROVE`);
     log.approve(`→ Routing to Executor Agent`);
@@ -190,7 +220,7 @@ export async function riskGuardNode(
   log.reject(`Decision: REJECT (LLM)`);
   log.reject(`Reason:   ${res.reason}`);
 
-  const override = await promptOverride(res.reason, "llm");
+  const override = await promptOverride(state, rug, res.reason, "llm");
   if (override) {
     const decision: RiskDecision = {
       decision: "approve",
@@ -215,8 +245,44 @@ export async function riskGuardNode(
 
 // ---------------------------------------------------------------------------
 
-async function promptOverride(reason: string, source: "hard-rule" | "llm"): Promise<boolean> {
+async function promptOverride(
+  state: TradingStateType,
+  rug: Awaited<ReturnType<typeof getRugRisk>>,
+  reason: string,
+  source: OverrideSource,
+): Promise<boolean> {
   if (!env.ALLOW_OVERRIDE) return false;
+
+  await emitEvent({
+    type: "override_requested",
+    agent: "risk_guard",
+    tokenAddress: state.tokenAddress,
+    data: { source, reason },
+  });
+
+  const hostDecision = await requestOverrideDecision({
+    tokenAddress: state.tokenAddress,
+    reason,
+    source,
+    onchainData: state.onchainData,
+    sentiment: state.sentiment,
+    rugRisk: rug,
+  });
+  if (hostDecision != null) {
+    if (hostDecision) {
+      await emitEvent({
+        type: "override_applied",
+        agent: "risk_guard",
+        tokenAddress: state.tokenAddress,
+        data: { source, reason, via: "host" },
+      });
+    }
+    return hostDecision;
+  }
+
+  if (getInteractionMode() !== "cli") {
+    return false;
+  }
 
   console.log("");
   log.warn(`══════════════════════════════════════════════════════`);
@@ -232,5 +298,14 @@ async function promptOverride(reason: string, source: "hard-rule" | "llm"): Prom
   console.log("");
 
   const answer = await ask(`  Proceed anyway? [y/N]: `);
-  return answer.trim().toLowerCase() === "y";
+  const approved = answer.trim().toLowerCase() === "y";
+  if (approved) {
+    await emitEvent({
+      type: "override_applied",
+      agent: "risk_guard",
+      tokenAddress: state.tokenAddress,
+      data: { source, reason, via: "cli" },
+    });
+  }
+  return approved;
 }
