@@ -49,7 +49,7 @@
     "@langchain/anthropic": "^0.3.11",
     "@langchain/core": "^0.3.27",
     "@langchain/langgraph": "^0.2.36",
-    "@langchain/openai": "^0.3.16",
+    "@langchain/openai": "^1.4.4",
     "@solana/web3.js": "^1.98.0",
     "bs58": "^6.0.0",
     "dotenv": "^16.4.5",
